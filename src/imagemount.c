@@ -374,6 +374,8 @@ nbd_service_requests(nbd_context_t *ncp, void *pctx)
      */
     create_pid_file(ncp, getpid(), &pidfile);
 
+    printf("mount \"%s\" ready\n", ncp->svc_mount);
+
     /*
      * Do work until we're completely done.
      */
@@ -794,6 +796,7 @@ main(int argc, char *argv[])
 				 (nc.svc_rdonly) ? SYSDEP_OPEN_RO : SYSDEP_OPEN_RW,
 				 &posix_dispatch,
 				 nc.svc_raw_available, &pctx))) {
+        printf("Preparing \"%s\"...\n", file);
 	    /*
 	     * Set tolerant mode (if specified).
 	     */
