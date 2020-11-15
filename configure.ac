@@ -14,9 +14,11 @@
 # Process this file with autoconf to produce a configure script.
 AC_PREREQ(2.62)
 AC_INIT([partclone-utils], [0.4.2], [xppppp@sf.net])
-AM_INIT_AUTOMAKE([-Wall -Werror])
+-AM_INIT_AUTOMAKE([])
 AC_CONFIG_SRCDIR([config.h.in])
 AC_CONFIG_HEADERS([config.h])
+
+AC_SUBST([AM_CFLAGS], ["-Wall -Wno-unused-function -Wno-cpp"])
 
 # Checks for programs.
 AC_PROG_CC
