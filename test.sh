@@ -11,15 +11,28 @@ if [ "$#" -eq 1 ] && [ "$1" == "debug" ]; then
 fi
 
 RAW_FS_IMAGE=/tmp/raw-fs-image
+RAW_FS_IMAGE_MOUNT_POINT=/tmp/mount-raw-fs-image
 PARTCLONE_IMAGE=/tmp/partclone-image
 NBD=/dev/nbd1
 PARTCLONE_MOUNT_POINT=/tmp/mount-partclone-image
+TEST_FILE_SRC=/tmp/test_file
+
+initial_setup() {
+    # Load the Network Block Device kernel module
+    modprobe nbd
+
+    # Create test file
+    sudo sh -c "echo 'This is a test file' > $TEST_FILE_SRC" 
+    TEST_FILE_MD5SUM=`md5sum $TEST_FILE_SRC | awk '{ print $1 }'`
+}
 
 reset() {
     mkdir $PARTCLONE_MOUNT_POINT 2>/dev/null || true
+    mkdir $RAW_FS_IMAGE_MOUNT_POINT 2>/dev/null || true
+    sudo umount $RAW_FS_IMAGE_MOUNT_POINT 2>/dev/null || true
     sudo umount $PARTCLONE_MOUNT_POINT 2>/dev/null || true
-    sudo nbd-client -d $NBD || true
     sudo pkill imagemount || true
+    sudo nbd-client -d $NBD || true
 }
 
 on_exit() {
@@ -89,6 +102,7 @@ mkfs() {
     fi
 }
 
+
 go() {
     local FS=$1
     local PC_FS=$2
@@ -97,13 +111,36 @@ go() {
     __go() {
         reset
 
-        dd if=/dev/zero bs=512 count=$NUM_BLOCKS of=$RAW_FS_IMAGE 2> /dev/null || return 1
+        # Prepare filesystem image
 
+        dd if=/dev/zero bs=512 count=$NUM_BLOCKS of=$RAW_FS_IMAGE 2> /dev/null || return 1
         mkfs $FS
         if [ $? -ne 0 ]; then
             return 1
         fi
 
+        # Mount the raw fs image as read-write
+        sudo mount $RAW_FS_IMAGE $RAW_FS_IMAGE_MOUNT_POINT
+        if [ $? -ne 0 ]; then
+            echo "mounting raw fs as read/write reported error" >&2
+            return 1
+        fi
+
+        # Copy in the test file
+        sudo cp $TEST_FILE_SRC $RAW_FS_IMAGE_MOUNT_POINT
+	if [ $? -ne 0 ]; then
+            echo "Copying test file into mount point reported error" >&2
+            return 1
+        fi
+
+        # Unmount the raw fs image mount
+        sudo umount $RAW_FS_IMAGE_MOUNT_POINT
+        if [ $? -ne 0 ]; then
+            echo "Unmounting raw fs image mount reported error" >&2
+            return 1
+        fi
+
+        # Create partclone image
         sudo rm -f $PARTCLONE_IMAGE
         sudo ~/partclone/$VER/src/partclone.$PC_FS --clone --source $RAW_FS_IMAGE --output $PARTCLONE_IMAGE 2> /dev/null 
         if [ $? -ne 0 ]; then
@@ -111,15 +148,25 @@ go() {
             return 1
         fi
 
-        sudo src/imagemount -d $NBD -f $PARTCLONE_IMAGE -r
+        # Associate the partclone image with an nbd device in read-only mode,
+        # to generate a raw block device of the underlying filesystem.
+        sudo sudo src/imagemount -d $NBD -f $PARTCLONE_IMAGE -r
         if [ $? -ne 0 ]; then
             echo "imagemount reported error" >&2
             return 1
         fi
+        sleep 3
 
+        # Mount the nbd device
         sudo mount -o ro $NBD $PARTCLONE_MOUNT_POINT
         if [ $? -ne 0 ]; then
             echo "mount reported error" >&2
+            return 1
+        fi
+
+        md5_actual=`md5sum $PARTCLONE_MOUNT_POINT/test_file | awk '{ print $1 }'`
+        if [ "z$md5_actual" != "z$TEST_FILE_MD5SUM" ]; then
+            echo "md5: $md5_actual did not match expected $TEST_FILE_MD5SUM" >&2
             return 1
         fi
 
@@ -154,7 +201,7 @@ for VER in v1 v2; do
     done
 done
 
-sudo modprobe nbd
+initial_setup
 
 ERR=0
 
